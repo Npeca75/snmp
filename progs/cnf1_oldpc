@@ -1,0 +1,29 @@
+#!/bin/bash
+
+source /etc/snmp/snmp.data
+
+logger -s -t "$TAG" -p "$PRIO" "Prepare DSA"
+mkdir -p $TMPDIR
+
+PORT=; OLDPORT=; VLANS=; VLAN=;
+rm -fr ${TMPDIR}/portMembers ${TMPDIR}/portUntagged ${TMPDIR}/vlans
+
+TMP="$(ip link | grep -E 'vlan[0-9]+@' | grep -Eo [0-9]+@ | tr -d '@')"
+VLANS=$(echo $TMP | tr ' ' "\n" | sort -un | xargs)
+
+for v in $VLANS; do
+    baseif=$(ip link show vlan$v|xargs| cut -d':' -f2|cut -d'@' -f2)
+    eval "INTM$v='$baseif '"\$"INTM$v"; # BaseIF is member (tagged)
+    eval "INTM$v='vlan$v '"\$"INTM$v"; # Vlan IF member
+    eval "INTU$v='vlan$v '"\$"INTU$v"; # Vlan IF untagged
+done
+
+echo $VLANS > $TMPDIR/vlans
+logger -s -t "$TAG" -p "$PRIO" "VLANs: $VLANS"
+
+for vlid in $VLANS; do
+    eval TMP=\$"INTM$vlid"
+    [ ! -z "$TMP" ] && 	echo "INTM$vlid=\"$TMP\"" >> ${TMPDIR}/portMembers
+    eval TMP=\$"INTU$vlid"
+    [ ! -z "$INTU$vlid" ] && echo "INTU$vlid=\"$TMP\"" >> ${TMPDIR}/portUntagged
+done
