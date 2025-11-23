@@ -18,7 +18,7 @@ chmod +x "$PROGLOC"
 NL=$'\n'
 LL="$NL"
 
-[ -n $(which smartctl) ] && {
+[ -n "$(which smartctl)" ] && {
     LL="${LL}${NL}extend smart ${PROGLOC}/smart -c /etc/snmp/smart.config";
     ${PROGLOC}/smart -gC > /etc/snmp/smart.config
 }
