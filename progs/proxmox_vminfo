@@ -18,7 +18,7 @@
 # extend proxmox_vminfo /etc/snmp/proxmox_vminfo
 
 # shellcheck source=/dev/null
-source /etc/snmp/snmp.data
+TMPDIR="/tmp/snmptmp"
 FILE="${TMPDIR}/out_proxmox_vminfo"
 DFILE="${TMPDIR}/dbg_proxmox_vminfo"
 
@@ -45,7 +45,7 @@ if [ "$ERRNR" != 0 ]; then
 else
     #shellcheck disable=SC2162
     while read -a VMDATA; do
-        CONF=$(qm config "${VMDATA[0]}" | xargs)
+        CONF=$(/usr/sbin/qm config "${VMDATA[0]}" | xargs)
         S=$(echo "$CONF"|grep -oE "sockets:\s[0-9]+" | cut -d':' -f2|xargs)
         C=$(echo "$CONF"|grep -oE "cores:\s[0-9]+" | cut -d':' -f2|xargs)
         OS=$(echo "$CONF"|grep -oE "ostype:\s\S+\s" | cut -d':' -f2|xargs)
@@ -53,18 +53,18 @@ else
         ROW="{\"type\":\"qemu\",\"id\":\"${VMDATA[0]}\",\"name\":\"${VMDATA[1]}\",\"os\":\"${OS}\",\"ram\":\"${VMDATA[3]}\",\"vcpu\":\"${VCPU}\",\"status\":\"${VMDATA[2]}\"}"
         [ -n "$JSONROW" ] && JSONROW="${JSONROW},"
         JSONROW="${JSONROW}${ROW}"
-    done < <(qm list --full| awk '{$1=$1};1'|tail -n +2)
+    done < <(/usr/sbin/qm list --full| awk '{$1=$1};1'|tail -n +2)
 
     #shellcheck disable=SC2162
     while read -a VMDATA; do
-        CONF=$(pct config "${VMDATA[0]}" | xargs)
+        CONF=$(/usr/sbin/pct config "${VMDATA[0]}" | xargs)
         VCPU=$(echo "$CONF"|grep -oE "cores:\s[0-9]+" | cut -d':' -f2|xargs)
         OS=$(echo "$CONF"|grep -oE "ostype:\s\S+\s" | cut -d':' -f2|xargs)
         RAM=$(echo "$CONF"|grep -oE "memory:\s\S+\s" | cut -d':' -f2|xargs)
         ROW="{\"type\":\"lxc\",\"id\":\"${VMDATA[0]}\",\"name\":\"${VMDATA[2]}\",\"os\":\"${OS}\",\"ram\":\"${RAM}\",\"vcpu\":\"${VCPU}\",\"status\":\"${VMDATA[1]}\"}"
         [ -n "$JSONROW" ] && JSONROW="${JSONROW},"
         JSONROW="${JSONROW}${ROW}"
-    done < <(pct list | awk '{$1=$1};1'|tail -n +2)
+    done < <(/usr/sbin/pct list | awk '{$1=$1};1'|tail -n +2)
 fi
 
 

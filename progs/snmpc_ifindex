@@ -1,0 +1,45 @@
+#!/bin/bash
+
+if [ -f "/opt/snmp/snmp.data" ]; then
+    . /opt/snmp/snmp.data
+else
+    gZLC=$(printf "%02d" $(($(uci -q get system.@system[0].locid)+0)))
+    gDSA=$(($(uci -q get system.@system[0].dsa)+0))
+fi
+
+PLACE="1.3.6.1.2.1.17.1.4.1.2"
+TMPDIR=/tmp/snmptmp
+BASEC=$(printf '%s' "$PLACE" | tr -d '.')
+mkdir -p "$TMPDIR"
+FILE=$TMPDIR/out_ifindex
+
+TMP_LIST="$TMPDIR/.tmp_ifindex_list.$$"
+TMP_OUT="$TMPDIR/.tmp_ifindex_out.$$"
+TMP_LAST="$TMPDIR/.tmp_ifindex_last.$$"
+
+> "$TMP_LIST"
+
+for dir in /sys/class/net/*; do
+    IFS= read -r idx < "$dir/ifindex"
+    [ -n "$idx" ] && echo "$idx" >> "$TMP_LIST"
+done
+
+P=""; echo "$P" > "$TMP_LAST"
+echo "getnext_${BASEC}='NONE'" > "$TMP_OUT"
+sort -n "$TMP_LIST" | while IFS= read -r id; do
+    [ -z "$id" ] && continue
+
+    if [ -z "$P" ]; then
+        echo "getnext_${BASEC}='${PLACE}.${id}'" >> "$TMP_OUT"
+    else
+        echo "getnext_${BASEC}${P}='${PLACE}.${id}'" >> "$TMP_OUT"
+    fi
+    echo "value_${BASEC}${id}='${id}'" >> "$TMP_OUT"
+    echo "type_${BASEC}${id}='integer'" >> "$TMP_OUT"
+    P=$id; echo "$P" > "$TMP_LAST"
+done
+P=$(cat "$TMP_LAST")
+echo "getnext_${BASEC}${P}='NONE'" >> "$TMP_OUT"
+
+mv "$TMP_OUT" "$FILE"
+rm -f "$TMP_LIST" "$TMP_LAST"

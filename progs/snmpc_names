@@ -1,0 +1,36 @@
+#!/bin/bash
+
+if [ -f "/opt/snmp/snmp.data" ]; then
+    . /opt/snmp/snmp.data
+else
+    gZLC=$(printf "%02d" $(($(uci -q get system.@system[0].locid)+0)))
+    gDSA=$(($(uci -q get system.@system[0].dsa)+0))
+fi
+
+PLACE="1.3.6.1.2.1.17.7.1.4.3.1.1"
+TMPDIR=/tmp/snmptmp
+BASEC=$(printf '%s' "$PLACE" | tr -d '.')
+mkdir -p "${TMPDIR}"
+
+FILE="${TMPDIR}/out_names"
+NFILE="${TMPDIR}/vlan_numbers"
+
+TMP_OUT="${TMPDIR}/.tmp_names_out.$$"
+
+P="";
+for id in $(cat "${NFILE}"); do
+    if [ -z "$P" ]; then
+        echo "getnext_${BASEC}=${PLACE}.${id}" > "$TMP_OUT"
+    else
+        echo "getnext_${BASEC}${P}=${PLACE}.${id}" >> "$TMP_OUT"
+    fi
+
+    [ -f "/etc/openwrt_version" ] && vl_name=$(uci -q get network.vlan${id}.description) || eval vl_name=\$"VN$id"
+    [ -z "$vl_name" ] && vl_name="Vlan_${id}"; #generic name
+    vl_name="${vl_name}@${gZLC}"; #add location sufix
+    echo "value_${BASEC}${id}=$vl_name" >> "$TMP_OUT"
+    echo "type_${BASEC}${id}='string'" >> "$TMP_OUT"
+    P=$id
+done
+echo "getnext_${BASEC}${P}='NONE'" >> "$TMP_OUT"
+mv "$TMP_OUT" "$FILE"

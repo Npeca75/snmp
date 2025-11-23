@@ -16,7 +16,7 @@
 # */6 * * * * root /etc/snmp/proxmox_disks -u
 
 # shellcheck source=/dev/null
-source /etc/snmp/snmp.data
+TMPDIR="/tmp/snmptmp"
 FILE="${TMPDIR}/out_proxmox_disks"
 DFILE="${TMPDIR}/dbg_proxmox_disks"
 
@@ -35,8 +35,23 @@ if [ "$ERRNR" != 0 ]; then
     ERRSTR="JQ missing"
     JSON="[]"
 else
-    JSON=$(pvesm status | awk '{$1=$1};1' | jq -scMR '[sub("\n$";"") | splits("\n") | sub("^ +";"") | [splits(" +")]] | .[0] as $header | .[1:] | [.[] | [. as $x | range($header | length) | {"key": $header[.], "value": $x[.]}] | from_entries]')
-#'
+    JSON=$(/usr/sbin/pvesm status |
+        awk 'NR == 1 { gsub(/ \(KiB\)/, ""); } {$1=$1; print}' |
+        jq -scMR '
+            [sub("\n$";"")
+            | splits("\n")
+            | sub("^ +";"")
+            | [splits(" +")]]
+            | .[0] as $header
+            | .[1:]
+            | [.[] |
+                [. as $x |
+                    range($header | length) |
+                    {"key": $header[.], "value": $x[.]}
+                ] |
+                from_entries
+            ]'
+    )
 fi
 
 JSONSTART="{\"version\":\"1\",\"data\":"

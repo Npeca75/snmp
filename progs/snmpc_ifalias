@@ -1,0 +1,76 @@
+#!/bin/sh
+
+if [ -f "/opt/snmp/snmp.data" ]; then
+    . /opt/snmp/snmp.data
+elif command -v uci >/dev/null 2>&1; then
+    gZLC=$(printf "%02d" $(($(uci -q get system.@system.locid) + 0)))
+    gDSA=$(($(uci -q get system.@system.dsa) + 0))
+fi
+
+PLACE="1.3.6.1.2.1.31.1.1.1.18"
+TMPDIR="/tmp/snmptmp"
+BASEC=$(printf '%s' "$PLACE" | tr -d '.')
+mkdir -p "$TMPDIR"
+
+FILE="$TMPDIR/out_ifalias"
+TMP_OUT="$TMPDIR/.tmp_ifalias_out.$$"
+
+trap 'rm -f "$TMP_OUT"' EXIT INT TERM
+
+{
+    for dir in /sys/class/net/*; do
+        [ -r "$dir/ifindex" ] || continue
+
+        IFS= read -r idx < "$dir/ifindex"
+        [ -n "$idx" ] || continue
+
+        ifname="${dir##*/}"
+
+        case "$ifname" in
+            *switch.*)
+                id="${ifname#*.}"
+                id="${id%%.*}"
+                if command -v uci >/dev/null 2>&1; then
+                    alias=$(uci -q get "network.vlan${id}.description") || alias="vlan${id}"
+                else
+                    alias="vlan${id}"
+                fi
+                ;;
+            vlan[0-9]*)
+                id="${ifname##*vlan}"
+                eval alias=\$"VN$id"
+                [ -z "$alias" ] && alias="Vlan${id}"
+                ;;
+            *)
+                [ -r "$dir/ifalias" ] || continue
+                IFS= read -r alias < "$dir/ifalias"
+                ;;
+        esac
+
+        # [ -z "$alias" ] && continue
+        printf '%s\t%s\n' "$idx" "$alias"
+    done
+} | sort -n -k1,1 | awk -F'\t' -v basec="$BASEC" -v place="$PLACE" '
+BEGIN {
+    p = ""
+    print "getnext_" basec "=\x27NONE\x27"
+}
+$1 != "" {
+    id = $1
+    descr = $2
+    gsub(/\x27/, "\x27\\\x27\x27", descr)
+
+    if (p == "") {
+        print "getnext_" basec "=\x27" place "." id "\x27"
+    } else {
+        print "getnext_" basec p "=\x27" place "." id "\x27"
+    }
+    print "value_" basec id "=\x27" descr "\x27"
+    print "type_" basec id "=\x27string\x27"
+    p = id
+}
+END {
+    print "getnext_" basec p "=\x27NONE\x27"
+}' > "$TMP_OUT"
+
+mv "$TMP_OUT" "$FILE"

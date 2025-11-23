@@ -1,0 +1,94 @@
+#!/bin/sh
+
+is_int() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+if [ -f "/opt/snmp/snmp.data" ]; then
+    . /opt/snmp/snmp.data
+else
+    gZLC=$(printf "%02d" $(($(uci -q get system.@system[0].locid)+0)))
+    gDSA=$(($(uci -q get system.@system[0].dsa)+0))
+fi
+
+TMPDIR="/tmp/snmptmp"
+mkdir -p "$TMPDIR"
+
+NFILE="${TMPDIR}/vlan_numbers"
+IFILE="${TMPDIR}/vlan_interfaces"
+VFILE="${TMPDIR}/vlan_variables"
+DFILE="${TMPDIR}/dbg_vlans"
+
+TMP_NFILE="${TMPDIR}/.tmp_vlan_number.$$"
+TMP_IFILE="${TMPDIR}/.tmp_vlan_interfaces.$$"
+TMP_VFILE="${TMPDIR}/.tmp_vlan_variables.$$"
+
+if [ "$gDSA" -eq "1" ]; then
+    TMP_BRIDGE="${TMPDIR}/.tmp_vlan_bridge.$$"
+
+    bridge -compressvlan vlan | tail -n +2 > "$TMP_BRIDGE"
+    while IFS= read -r line; do
+        port=$(echo "$line"|cut -b1-18|xargs)
+        rest=$(echo "$line"|cut -b18-50|xargs)
+        vl1=$(echo "$rest"|grep -Eo '[0-9]{1,4}'|head -1)
+        vl2=$(echo "$rest" | cut -d '-' -f2 | tr -dc '0-9')
+        if [ "$vl1" -eq 2 ] && [ "$vl2" -eq 4094 ]; then continue; fi
+        for vlid in $(seq $vl1 $vl2); do
+            if [ "$vlid" -ge 1 ] && [ "$vlid" -lt 4095 ]; then
+                if [ "$port" != "" ] && [ "$port" != "$oldport" ]; then oldport="$port"; fi
+                [ -z "$port" ] && port="$oldport"
+                echo "$vlid" >> "$TMP_NFILE"
+                eval "INTM$vlid='$port '"\$"INTM$vlid"
+                [ -z "${rest##*ntagged*}" ] && eval "INTU$vlid='$port '"\$"INTU$vlid"
+                echo "P:$port V:$vlid REST:$rest" >> "$DFILE"
+            fi
+        done
+    done < "$TMP_BRIDGE"
+
+    TMP=$(ip l | grep -Eo "switch\.[0-9]+" | cut -d'.' -f2 | sort -un)
+    for vlid in $TMP; do
+        eval "INTM$vlid='switch.$vlid '"\$"INTM$vlid"
+        eval "INTU$vlid='switch.$vlid '"\$"INTU$vlid"
+        echo "$vlid" >> "$TMP_NFILE"
+    done
+
+    TMP=$(ip l | grep -Eo "vlan[0-9]+@" | grep -Eo "[0-9]+" | sort -un)
+    for vlid in $TMP; do
+        eval "INTM$vlid='vlan${vlid} '"\$"INTM"$vlid
+        eval "INTU$vlid='vlan${vlid} '"\$"INTU"$vlid
+        echo "$vlid" >> "$TMP_NFILE"
+    done
+    rm -f "$TMP_BRIDGE"
+else
+    TMP="$(grep -Eo '(br-vlan|vlan|e[a-z0-9]+\.|wlan[0-9]-vl)[0-9]+' /proc/net/dev)"
+    echo "Phase1: $TMP" > "$DFILE"
+
+    for t in $TMP; do
+        vlid=""
+        is_int "${t#*br-vlan}" && vlid="${t#*br-vlan}"
+        is_int "${t#*vlan}"    && vlid="${t#*vlan}"
+        is_int "${t#*-vl}"     && vlid="${t#*-vl}"
+        is_int "${t#*.}"       && { vlid="${t#*.}"; b="${t%.*}"; eval "INTM$vlid='$b '"\$"INTM$vlid"; }
+
+        [ -z "$vlid" ] && { echo "UNK: $t" >> "$DFILE"; continue; }
+        echo "$vlid" >> "$TMP_NFILE"
+        eval "INTM$vlid='$t '"\$"INTM$vlid"; # Vlan IF member
+        eval "INTU$vlid='$t '"\$"INTU$vlid"; # Vlan IF untagged
+    done
+fi
+
+sort -uno "${TMP_NFILE}" "${TMP_NFILE}"
+VLANS="$(cat $TMP_NFILE)"
+
+for vlid in $VLANS; do
+    eval TMP=\$"INTM$vlid"; echo "INTM${vlid}=\"${TMP%?}\"" >> "$TMP_IFILE"
+    eval TMP=\$"INTU$vlid"; echo "INTU${vlid}=\"${TMP%?}\"" >> "$TMP_IFILE"
+    echo "VLID${vlid}=${vlid}" >> "$TMP_VFILE"
+done
+
+mv "$TMP_VFILE" "$VFILE"
+mv "$TMP_IFILE" "$IFILE"
+mv "$TMP_NFILE" "$NFILE"
