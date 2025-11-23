@@ -35,7 +35,7 @@ for v in $VLANS; do
     done
 
     pc=0; STR="";
-    for g in $(seq 1 128); do
+    for g in $(seq 1 256); do
         eval O=\$"OUT$g"
         eval "OUT$g=''"
         [ -z "$O"  ] && O="0"
