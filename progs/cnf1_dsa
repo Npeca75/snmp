@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+
+logger -s -t "$TAG" -p "$PRIO" "Prepare $TYPE"
+mkdir -p "$TMPDIR"
+
+PORT=; OLDPORT=; VLANS=; VLAN=;
+rm -fr "${TMPDIR}"/portMembers "${TMPDIR}"/portUntagged "${TMPDIR}"/vlans
+
+bridge -compressvlan vlan | tail -n +2 > "${TMPDIR}"/bridge.tmp
+while IFS= read -r line; do
+    LTRIM=$(echo $line | xargs)
+    [ -z "$LTRIM" ] && continue
+    F1=$(echo "$LTRIM" | cut -d' ' -f1)
+    [[ $F1 =~ ^-?[0-9]+(-[0-9]+)?$ ]] && VLAN=$F1 || { PORT=$F1; VLAN=$(echo $LTRIM|cut -d' ' -f2); }
+    tmpv=$(echo "$LTRIM" | grep -Eo '([0-9]{1,4})-([0-9]{1,4})' | head -1); #'
+    [ "$tmpv" = "2-4094" ] && continue;
+    [ ! -z "$tmpv" ] && { v1=$(echo "$tmpv" | cut -d'-' -f1); v2=$(echo "$tmpv" | cut -d'-' -f2); } || { v1=$VLAN; v2=$VLAN; }
+    for vlid in $(seq $v1 $v2); do
+        [ "$vlid" -ge 1 ] && [ "$vlid" -lt 4096 ] && {
+            [ ! -z "$PORT" ] && [ "$PORT" != "$OLDPORT" ] && { oldport="$PORT"; }
+            [ -z "$PORT" ] && port="$OLDPORT"
+            echo "$vlid" >> "$TMPDIR"/vlans
+            eval "INTM$vlid='$PORT '"\$"INTM$vlid"
+            [ -z "${LTRIM##*ntagged*}" ] && eval "INTU$vlid='$PORT '"\$"INTU$vlid"
+            logger -s -t "$TAG" -p "$PRIO" "P:$PORT V:$vlid LINE:$LTRIM"
+        }
+    done
+done < "${TMPDIR}"/bridge.tmp
+
+TMP=$(ip l | grep -Eo "vlan[0-9]+@" | grep -Eo "[0-9]+" | sort -un)
+for id in $TMP; do
+    eval "INTM$id='vlan${id} '"\$"INTM"$id
+    eval "INTU$id='vlan${id} '"\$"INTU"$id
+done
+
+VLANS=$(sort -un "$TMPDIR"/vlans | xargs)
+echo $VLANS > $TMPDIR/vlans
+logger -s -t "$TAG" -p "$PRIO" "VLANs: $VLANS"
+
+for vlid in $VLANS; do
+    eval TMP=\$"INTM$vlid"
+    [ ! -z "$TMP" ] && 	echo "INTM$vlid=\"$TMP\"" >> "${TMPDIR}"/portMembers
+    eval TMP=\$"INTU$vlid"
+    [ ! -z "$INTU$vlid" ] && echo "INTU$vlid=\"$TMP\"" >> "${TMPDIR}"/portUntagged
+done
