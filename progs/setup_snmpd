@@ -18,7 +18,7 @@ chmod +x "$PROGLOC"
 NL=$'\n'
 LL="$NL"
 
-[ ! -z $(which smartctl) ] && [ "$TYPE" != "lxc" ] && {
+[ -n $(which smartctl) ] && {
     LL="${LL}${NL}extend smart ${PROGLOC}/smart -c /etc/snmp/smart.config";
     ${PROGLOC}/smart -gC > /etc/snmp/smart.config
 }
@@ -36,7 +36,7 @@ LDES="sysDescr Linux"
 [ ! -z "$SYSDES" ] && LDES="$LDES | $SYSDES"
 
 LFDB="pass_persist .1.3.6.1.2.1.17.7.1.2.2.1.2 ${PROGLOC}/snmp_fdb${TYPE}"
-[ "$TYPE" = 'lxc' ] && LFDB=
+[ "$TYPE" = 'plain' ] && LFDB=
 
 logger -s -t "$TAG" -p "$PRIO" "Config write"
 cat <<EOF > /etc/snmp/snmpd.conf
@@ -115,8 +115,9 @@ IP=$(ip -6 a show dev $gMGMNIF 2>/dev/null | grep 'fdfd'|xargs|cut -d' ' -f2|cut
 [ -z "$IP" ] && IP=$(ip -4 a show dev $gMGMNIF 2>/dev/null | grep 'inet'|xargs|cut -d' ' -f2|cut -d'/' -f1)
 
 IFPAT="eth*,eno*,enp*,ens*,tap*,veth*,fwbr*"
-[ "$TYPE" = "plain" ] && [ ! -f ${TMPDIR}/base_ifs ] && { IFPAT="vlan*" }
-
+[ "$TYPE" = "plain" ] && [ ! -f ${TMPDIR}/base_ifs ] && {
+    IFPAT="vlan*"
+}
 
 logger -s -t "$TAG" -p "$PRIO" "Config write"
 cat <<EOF > ${BASEDIR}/lldpd.conf
