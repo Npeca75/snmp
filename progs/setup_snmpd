@@ -29,7 +29,7 @@ LL="$NL"
 [ ! -z $(which mysqld) ] && LL="${LL}${NL}extend mysql ${PROGLOC}/mysql"
 ls /dev/md* 2>/dev/null && LL="${LL}${NL}extend mdadm ${PROGLOC}/mdadm"
 
-HN=$(hostname -s)
+HN=$(hostname -f)
 SYSLOC="${gCITY} [${gLAT},${gLON}]"
 LDES="sysDescr Linux"
 [ "$TYPE" = "proxmox" ] && LDES="$LDES $(uname -r)" || LDES="$LDES $(uname -r|cut -d'-' -f1)"
@@ -44,6 +44,7 @@ cat <<EOF > /etc/snmp/snmpd.conf
 com2sec ro 169.254.${gZLC}.0/24 ${COM}
 com2sec rw 169.254.255.30/32 W${COM}
 com2sec6 ro fdfd:0:${gZLC}::/48 ${COM}
+com2sec6 rw fdfd:1:255::/64 ${COM}
 com2sec6 rw fdfd:1:255::30/128 W${COM}
 #
 group read v1 ro
