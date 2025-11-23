@@ -1,0 +1,87 @@
+#!/bin/bash
+
+place="1.3.6.1.2.1.17.7.1.4.3.1.1"
+
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+mkdir -p "$TMPDIR"
+
+FILE="$TMPDIR"/out_vlanNames
+DFILE="$TMPDIR"/dbg_vlanNames
+
+snmp1() {
+    date +%X > "$DFILE"
+    echo "$place" >> "$DFILE"
+    echo "${gZLC:?}" >> "$DFILE"
+
+    P=
+    for id in $(cat "$TMPDIR"/vlans); do
+        if [ -z "$P" ]; then
+            echo "getnext_13612117714311=${place}.${id}" > "$FILE"
+        else
+            echo "getnext_13612117714311${P}=${place}.${id}" >> "$FILE"
+        fi
+        eval vl_name=\$"VN$id"
+        [ -z "$vl_name" ] && vl_name="Vlan_${id}"; #generic name
+        vl_name="${vl_name}@${gZLC}"; #add location sufix
+        echo "value_13612117714311${id}=$vl_name" >> "$FILE"
+        echo "type_13612117714311${id}='string'" >> "$FILE"
+        P=$id
+    done
+    echo "getnext_13612117714311${P}='NONE'" >> "$FILE"
+    # shellcheck source=/dev/null
+    source "$FILE"
+}
+snmp1
+
+while read -r CMD
+do
+D=$(($(date +%s)-$(date +%s -r "$FILE")))
+[ "$D" -gt 100 ] && snmp1
+  case "$CMD" in
+    PING)
+      echo PONG
+      continue
+      ;;
+    getnext)
+      read -r REQ
+      oid=$(echo "$REQ" | tr -d .)
+      eval ret=\$getnext_"${oid}"
+      if test "$ret" = "NONE"
+      then
+        echo NONE
+        continue
+      fi
+      ;;
+    get)
+      read -r REQ
+      if test "$REQ" = "$place"
+      then
+        echo NONE
+        continue
+      else
+        ret="$REQ"
+      fi
+      ;;
+    *)
+      read -r REQ
+      if test "$REQ" = "$place"
+      then
+        echo NONE
+        continue
+      else
+        ret="$REQ"
+      fi
+      ;;
+  esac
+
+  oid=$(echo "$ret" | tr -d .)
+  if eval test "x\$type_${oid}" != "x"
+  then
+    echo "$ret"
+    eval echo "\$type_${oid}"
+    eval echo "\$value_${oid}"
+  else
+    echo NONE
+  fi
+done

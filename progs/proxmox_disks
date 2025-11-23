@@ -1,0 +1,45 @@
+#!/bin/bash
+
+#/*
+# *
+# * LibreNMS Proxmox storage discovery agent for Linux / Proxmox
+# *
+# * @package    LibreNMS
+# * @link       https://www.librenms.org
+# *
+# * @author     Peca Nesovanovic <peca.nesovanovic@sattrakt.com>
+# * @copyright  2023 Peca Nesovanovic
+# */
+#
+# Usage:
+# /etc/crontab
+# */6 * * * * root /etc/snmp/proxmox_disks -u
+
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+FILE="${TMPDIR}/out_proxmox_disks"
+DFILE="${TMPDIR}/dbg_proxmox_disks"
+
+date +%X > "$DFILE"
+echo "$1" >> "$DFILE"
+
+[ -z "$1" ] && {
+    cat "$FILE"
+    exit
+}
+
+ERRSTR=""
+which jq > /dev/null
+ERRNR="$?"
+if [ "$ERRNR" != 0 ]; then
+    ERRSTR="JQ missing"
+    JSON="[]"
+else
+    JSON=$(pvesm status | awk '{$1=$1};1' | jq -scMR '[sub("\n$";"") | splits("\n") | sub("^ +";"") | [splits(" +")]] | .[0] as $header | .[1:] | [.[] | [. as $x | range($header | length) | {"key": $header[.], "value": $x[.]}] | from_entries]')
+#'
+fi
+
+JSONSTART="{\"version\":\"1\",\"data\":"
+JSONEND=",\"error\":\"${ERRNR}\",\"errorString\":\"${ERRSTR}\"}"
+echo "${JSONSTART}${JSON}${JSONEND}" > "$FILE"
+chmod 644 "${FILE}"

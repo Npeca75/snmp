@@ -1,0 +1,67 @@
+#!/bin/bash
+
+place="1.3.6.1.2.1.17.7.1.1.1"
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+mkdir -p "$TMPDIR"
+
+#FILE="${TMPDIR}/out_vlanVersion"
+DFILE="${TMPDIR}/dbg_vlanVersion"
+
+date +%X > "$DFILE"
+echo $place >> "$DFILE"
+
+export getnext_136121177111="$place.0"
+export getnext_1361211771110='NONE'
+export type_1361211771110='integer'
+export value_1361211771110='1'
+
+while read -r CMD
+do
+  case "$CMD" in
+    PING)
+      echo PONG
+      continue
+      ;;
+    getnext)
+      read -r REQ
+      oid=$(echo "$REQ" | tr -d .)
+      eval ret=\$getnext_"${oid}"
+      if test "$ret" = "NONE"
+      then
+        echo NONE
+        continue
+      fi
+      ;;
+    get)
+      read -r REQ
+      if test "$REQ" = "$place"
+      then
+        echo NONE
+        continue
+      else
+        ret="$REQ"
+      fi
+      ;;
+    *)
+      read -r REQ
+      if test "$REQ" = "$place"
+      then
+        echo NONE
+        continue
+      else
+        ret="$REQ"
+      fi
+      ;;
+  esac
+
+  oid=$(echo "$ret" | tr -d .)
+  if eval test "x\$type_${oid}" != "x"
+  then
+    echo "$ret"
+    eval echo "\$type_${oid}"
+    eval echo "\$value_${oid}"
+  else
+    echo NONE
+  fi
+done

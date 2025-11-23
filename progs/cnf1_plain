@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+
+logger -s -t "$TAG" -p "$PRIO" "Prepare $TYPE"
+mkdir -p "$TMPDIR"
+
+rm -rf "${TMPDIR}/portMembers" "${TMPDIR}/portUntagged" "${TMPDIR}/vlans" "${TMPDIR}/base_ifs"
+
+VLANS="$(ip link | grep -Eo 'vlan[0-9]+[^0-9]' | tr -d '[:alpha:]' | sort -un | xargs)"
+
+for v in $VLANS; do
+    DELIMITER="${v: -1}"
+    VLANID=$(tr -d "$DELIMITER" <<< "$v")
+    if ! grep 'lxc' /proc/1/environ > /dev/null;then
+        [ "$DELIMITER" = "@" ] && {
+            baseif=$(ip link show vlan"${VLANID}" | xargs | cut -d':' -f2 | cut -d'@' -f2);
+            eval "INTM$VLANID='$baseif '"\$"INTM$VLANID"; # BaseIF is member (tagged)
+            echo "$baseif" >> "${TMPDIR}/base_ifs"
+        }
+    fi
+    eval "INTM$VLANID='vlan$VLANID '"\$"INTM$VLANID"; # Vlan IF member
+    eval "INTU$VLANID='vlan$VLANID '"\$"INTU$VLANID"; # Vlan IF untagged
+done
+
+VLANS=$(tr -d "$DELIMITER" <<< "$VLANS")
+echo "$VLANS" > "${TMPDIR}/vlans"
+logger -s -t "$TAG" -p "$PRIO" "VLANs: $VLANS"
+
+for vlid in $VLANS; do
+    eval TMP=\$"INTM$vlid"
+    [ -n "$TMP" ] && echo "INTM$vlid=\"$TMP\"" >> "${TMPDIR}/portMembers"
+    eval TMP=\$"INTU$vlid"
+    [ -n "$TMP" ] && echo "INTU$vlid=\"$TMP\"" >> "${TMPDIR}/portUntagged"
+done

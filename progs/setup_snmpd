@@ -1,0 +1,137 @@
+#!/bin/bash
+
+TAG=SNMP
+PRIO=daemon.info
+
+logger -s -t "$TAG" -p "$PRIO" "Prepare Common"
+
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+mkdir -p "$TMPDIR"
+mkdir -p "$PROGLOC"
+chmod +x "$PROGLOC"
+
+"${PROGLOC}/cnf1_${TYPE}"
+"${PROGLOC}/cnf2_common"
+"${PROGLOC}/cnf3_common"
+#
+NL=$'\n'
+LL="$NL"
+
+[ ! -z $(which smartctl) ] && [ "$TYPE" != "lxc" ] && {
+    LL="${LL}${NL}extend smart ${PROGLOC}/smart -c /etc/snmp/smart.config";
+    ${PROGLOC}/smart -gC > /etc/snmp/smart.config
+}
+[ ! -z $(which docker) ] && LL="${LL}${NL}extend docker ${PROGLOC}/docker-stats.sh"
+[ ! -z $(which upsc) ] && LL="${LL}${NL}extend ups-nut ${PROGLOC}/ups-nut.sh"
+[ ! -z $(which qm) ] && LL="${LL}${NL}extend proxmox_vminfo ${PROGLOC}/proxmox_vminfo"
+[ ! -z $(which pvesm) ] && LL="${LL}${NL}extend proxmox_disks ${PROGLOC}/proxmox_disks"
+[ ! -z $(which mysqld) ] && LL="${LL}${NL}extend mysql ${PROGLOC}/mysql"
+ls /dev/md* 2>/dev/null && LL="${LL}${NL}extend mdadm ${PROGLOC}/mdadm"
+
+HN=$(hostname -s)
+SYSLOC="${gCITY} [${gLAT},${gLON}]"
+LDES="sysDescr Linux"
+[ "$TYPE" = "proxmox" ] && LDES="$LDES $(uname -r)" || LDES="$LDES $(uname -r|cut -d'-' -f1)"
+[ ! -z "$SYSDES" ] && LDES="$LDES | $SYSDES"
+
+LFDB="pass_persist .1.3.6.1.2.1.17.7.1.2.2.1.2 ${PROGLOC}/snmp_fdb${TYPE}"
+[ "$TYPE" = 'lxc' ] && LFDB=
+
+logger -s -t "$TAG" -p "$PRIO" "Config write"
+cat <<EOF > /etc/snmp/snmpd.conf
+
+com2sec ro 169.254.${gZLC}.0/24 ${COM}
+com2sec rw 169.254.255.30/32 W${COM}
+com2sec6 ro fdfd:0:${gZLC}::/48 ${COM}
+com2sec6 rw fdfd:1:255::30/128 W${COM}
+#
+group read v1 ro
+group read v2c ro
+group read usm ro
+group write v1 rw
+group write v2c rw
+group write usm rw
+view all included .1
+#
+access read "" any noauth exact all none all
+access write "" any noauth exact all all all
+
+agentaddress UDP6:161,UDP:161
+master agentx
+#agentXSocket /var/run/agentx.sock
+agentXSocket /var/agentx/master
+agentxperms 777 777
+
+syslocation $SYSLOC
+syscontact $SYSCON
+sysName $HN
+$LDES
+
+extend .1.3.6.1.4.1.2021.7890.1 distro ${PROGLOC}/distro
+extend .1.3.6.1.4.1.2021.7890.2 hardware '/bin/cat /sys/devices/virtual/dmi/id/product_name'
+extend .1.3.6.1.4.1.2021.7890.3 manufacturer '/bin/cat /sys/devices/virtual/dmi/id/sys_vendor'
+extend .1.3.6.1.4.1.2021.7890.4 serial '/bin/cat /sys/devices/virtual/dmi/id/bios_date'
+${LL}
+
+pass_persist .1.3.6.1.2.1.17.1.4.1.2 ${PROGLOC}/snmp_ifindex
+pass_persist .1.3.6.1.2.1.17.7.1.1.1 ${PROGLOC}/snmp_vlanVersion
+pass_persist .1.3.6.1.2.1.17.7.1.4.2.1.4 ${PROGLOC}/snmp_vlanMembers
+pass_persist .1.3.6.1.2.1.17.7.1.4.2.1.5 ${PROGLOC}/snmp_vlanUntagged
+pass_persist .1.3.6.1.2.1.17.7.1.4.3.1.1 ${PROGLOC}/snmp_vlanNames
+${LFDB}
+EOF
+
+OPTS="-LS5d -Lf /dev/null -u root -g root -I -smux,mteTrigger,mteTriggerConf -p /run/snmpd.pid"
+logger -s -t "$TAG" -p "$PRIO" "Defaults write: $OPTS"
+echo "SNMPDOPTS='$OPTS'" > /etc/default/snmpd
+#
+mkdir -p /etc/systemd/system/snmpd.service.d
+cat <<EOF > /etc/systemd/system/snmpd.service.d/override.conf
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/run/agentx
+ExecStart=
+ExecStart=/usr/sbin/snmpd -f $OPTS
+# ExecReload=/bin/kill -HUP $MAINPID
+EOF
+
+killall -9 snmpd; killall -9 snmpd
+systemctl daemon-reload
+systemctl restart snmpd
+
+#
+TAG=LLDPD
+PRIO=daemon.info
+BASEDIR=/etc/lldpd.d
+
+logger -s -t "$TAG" -p "$PRIO" "Prepare"
+systemctl stop lldpd
+mkdir -p ${BASEDIR}
+
+HN=$(hostname -s)
+
+IP=$(ip -6 a show dev $gMGMNIF 2>/dev/null | grep 'fdfd'|xargs|cut -d' ' -f2|cut -d'/' -f1)
+[ -z "$IP" ] && IP=$(ip -4 a show dev $gMGMNIF 2>/dev/null | grep 'inet'|xargs|cut -d' ' -f2|cut -d'/' -f1)
+
+IFPAT="eth*,eno*,enp*,ens*,tap*,veth*,fwbr*"
+[ "$TYPE" = "plain" ] && [ ! -f ${TMPDIR}/base_ifs ] && { IFPAT="vlan*" }
+
+
+logger -s -t "$TAG" -p "$PRIO" "Config write"
+cat <<EOF > ${BASEDIR}/lldpd.conf
+configure lldp portidsubtype ifname
+configure system interface pattern ${IFPAT}
+configure system hostname '${HN}'
+configure system interface description
+configure system ip management pattern $IP
+configure med location coordinate latitude ${gLAT}N longitude ${gLON}E altitude 100 m datum WGS84
+configure med location address country RS street 'unknown' city '${gCITY}'
+${INTSTR}
+EOF
+
+logger -s -t "$TAG" -p "$PRIO" "Defaults write"
+echo "DAEMON_ARGS=\"-l -i -M 4 -x -O /etc/lldpd.d/lldpd.conf\"" > /etc/default/lldpd
+
+sleep 1
+systemctl restart lldpd

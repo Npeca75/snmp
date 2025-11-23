@@ -1,0 +1,84 @@
+#!/bin/bash
+
+place="1.3.6.1.2.1.17.1.4.1.2"
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+mkdir -p "$TMPDIR"
+
+FILE="${TMPDIR}/out_ifindex"
+DFILE="${TMPDIR}/dbg_ifindex"
+
+snmp1() {
+    date +%X > "$DFILE"
+    echo $place >> "$DFILE"
+    IFINDEX=$(ip link show | grep mtu | cut -d":" -f1 | sort -un)
+
+    P=
+    for id in $IFINDEX; do
+        if [ -z "$P" ]; then
+            echo "getnext_136121171412=$place.$id" > "$FILE"
+        else
+            echo "getnext_136121171412$P=$place.$id" >> "$FILE"
+        fi
+        echo "value_136121171412$id=$id" >> "$FILE"
+        echo  "type_136121171412$id='integer'" >> "$FILE"
+        P=$id
+    done
+    echo "getnext_136121171412$P='NONE'" >> "$FILE"
+    # shellcheck source=/dev/null
+    source "$FILE"
+}
+
+snmp1
+
+while read -r CMD
+do
+  D=$(($(date +%s)-$(date +%s -r "$FILE")))
+  [ "$D" -gt 300 ] && snmp1
+  case "$CMD" in
+    PING)
+      echo PONG
+      continue
+      ;;
+    getnext)
+      read -r REQ
+      oid=$(echo "$REQ" | tr -d .)
+      eval ret=\$getnext_"${oid}"
+      if test "$ret" = "NONE"
+      then
+        echo NONE
+        continue
+      fi
+      ;;
+    get)
+      read -r REQ
+      if test "$REQ" = "$place"
+      then
+        echo NONE
+        continue
+      else
+        ret="$REQ"
+      fi
+      ;;
+    *)
+      read -r REQ
+      if test "$REQ" = "$place"
+      then
+        echo NONE
+        continue
+      else
+        ret="$REQ"
+      fi
+      ;;
+  esac
+
+  oid=$(echo "$ret" | tr -d .)
+  if eval test "x\$type_${oid}" != "x"
+  then
+    echo "$ret"
+    eval echo "\$type_${oid}"
+    eval echo "\$value_${oid}"
+  else
+    echo NONE
+  fi
+done

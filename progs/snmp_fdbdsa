@@ -1,0 +1,96 @@
+#!/bin/bash
+
+place='1.3.6.1.2.1.17.7.1.2.2.1.2'
+PLACEC='13612117712212'
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+mkdir -p "$TMPDIR"
+
+snmp1() {
+    rm -fr "$TMPDIR"/out_fdb "$TMPDIR"/out_fdb1 "$TMPDIR"/out_fdb2
+    bridge fdb > "$TMPDIR"/out_fdb_bridge
+    while IFS=' ' read -r MAC skip1 DEV TYPE VLAN skip2; do
+        if [ "$TYPE" == "vlan" ]; then
+                TMPD=${DEV/./_}
+                eval "TMP="\$"IDX$TMPD"
+                if [ -z "$TMP" ]; then
+                        TMP=$(cat /sys/class/net/"$DEV"/ifindex)
+                        eval "IDX$TMPD="\$"TMP"
+                fi
+            IFS=':'; set -- $MAC
+            echo $VLAN.$((0x$1)).$((0x$2)).$((0x$3)).$((0x$4)).$((0x$5)).$((0x$6)),$TMP >> "$TMPDIR"/out_fdb
+        fi
+    done < "$TMPDIR"/out_fdb_bridge
+
+    OLDOIDC="$PLACEC"
+    sort -n -t'.' -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 -k6,6 -k7,7 "$TMPDIR"/out_fdb |
+    while IFS=',' read OID VAL; do
+        NEWOIDE=$place.$OID
+        NEWOIDC=$PLACEC$(echo $OID | tr -d '.' | xargs)
+        echo "getnext_$OLDOIDC=$NEWOIDE" >> "$TMPDIR"/out_fdb1
+        echo "value_$NEWOIDC='$VAL'" >> "$TMPDIR"/out_fdb1
+        echo "type_$NEWOIDC='integer'" >> "$TMPDIR"/out_fdb1
+        OLDOIDC=$NEWOIDC
+        echo "getnext_$OLDOIDC='NONE'" > "$TMPDIR"/out_fdb2
+    done
+    # shellcheck source=/dev/null
+    source "$TMPDIR"/out_fdb1
+    # shellcheck source=/dev/null
+    source "$TMPDIR"/out_fdb2
+}
+
+snmp1
+
+while read -r CMD
+do
+
+let D=$(date +%s)-$(date +%s -r "$TMPDIR"/out_fdb2)
+if [ "$D" -gt 100 ]; then snmp1; fi
+
+  case "$CMD" in
+    PING)
+      echo PONG
+      continue
+      ;;
+    getnext)
+      read -r REQ
+      oid=$(echo $REQ | tr -d .)
+      eval ret=\$getnext_${oid}
+      if test "x$ret" = "xNONE"
+      then
+        echo NONE
+        continue
+      fi
+      ;;
+    get)
+      read -r REQ
+      if test "x$REQ" = "x$place"
+      then
+        echo NONE
+        continue
+      else
+        ret=$REQ
+      fi
+      ;;
+    *)
+      read -r REQ
+      if test "x$REQ" = "x$place"
+      then
+        echo NONE
+        continue
+      else
+        ret=$REQ
+      fi
+      ;;
+  esac
+
+  oid=$(echo $ret | tr -d .)
+  if eval test "x\$type_${oid}" != "x"
+  then
+    echo $ret
+    eval echo "\$type_${oid}"
+    eval echo "\$value_${oid}"
+  else
+    echo NONE
+  fi
+done

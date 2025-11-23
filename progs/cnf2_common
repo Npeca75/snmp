@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# shellcheck source=/dev/null
+source /etc/snmp/snmp.data
+
+logger -s -t "$TAG" -p "$PRIO" "Prepare vlan Members"
+mkdir -p $TMPDIR
+rm -fr $TMPDIR/out_vlanMembers $TMPDIR/dbg_vlanMembers2
+
+# shellcheck source=/dev/null
+source $TMPDIR/portMembers
+VLANS=$(cat $TMPDIR/vlans)
+
+# VLAN members
+place="1.3.6.1.2.1.17.7.1.4.2.1.4.0"
+ov=""; P0=1; P1=8; P2=4; P3=2
+for v in $VLANS; do
+    if [ "$ov" != "" ]; then
+        echo "getnext_136121177142140$ov=$place.$v" >> ${TMPDIR}/out_vlanMembers
+    else
+        echo "getnext_13612117714214=$place.$v" > ${TMPDIR}/out_vlanMembers
+    fi
+
+    eval IS=\$"INTM$v"
+    echo "Vlan: $v is: $IS" >> ${TMPDIR}/dbg_vlanMembers2
+
+    for et in $IS; do
+        port=$(ip link show $et|grep mtu|cut -d":" -f1)
+        let i=$(($port/4))*4
+        let i=$port-$i
+        eval O=\$"P$i"
+        let PG=$(($(($port-1))/4))+1
+        echo "Port:$port -> Index:$i -> Value:$O -> group $PG" >> ${TMPDIR}/dbg_vlanMembers2
+        eval "let OUT$PG="\$"OUT$PG+$O"
+    done
+
+    pc=0; STR="";
+    for g in $(seq 1 128); do
+        eval O=\$"OUT$g"
+        eval "OUT$g=''"
+        [ -z "$O"  ] && O="0"
+        [ "$pc" = "2" ] && { pc=0; STR="$STR "; }
+        STR=$STR$(printf '%x' $O)
+        let pc=$pc+1
+    done
+    [ "$pc" = "1" ] && STR="${STR}0"
+    echo "Vlan: $v OID: $STR" >> ${TMPDIR}/dbg_vlanMembers2
+    echo "value_136121177142140$v='$STR'" >> ${TMPDIR}/out_vlanMembers
+    echo "type_136121177142140$v='octetstring'" >> ${TMPDIR}/out_vlanMembers
+    ov=$v
+done
+echo "getnext_136121177142140$v='NONE'" >> ${TMPDIR}/out_vlanMembers
