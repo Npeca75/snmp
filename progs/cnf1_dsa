@@ -6,43 +6,86 @@ source /etc/snmp/snmp.data
 logger -s -t "$TAG" -p "$PRIO" "Prepare $TYPE"
 mkdir -p "$TMPDIR"
 
-PORT=; OLDPORT=; VLANS=; VLAN=;
 rm -fr "${TMPDIR}"/portMembers "${TMPDIR}"/portUntagged "${TMPDIR}"/vlans
 
+# Clear out any old state
+unset -v $(compgen -v INTM) 2>/dev/null
+unset -v $(compgen -v INTU) 2>/dev/null
+
+# Capture raw structure 
 bridge -compressvlan vlan | tail -n +2 > "${TMPDIR}"/bridge.tmp
+
+PORT=""
 while IFS= read -r line; do
-    LTRIM=$(echo $line | xargs)
+    LTRIM=$(echo "$line" | xargs)
+    echo $LTRIM
     [ -z "$LTRIM" ] && continue
+
+    # Extract Port and VLAN fields safely without heavy subshells
     F1=$(echo "$LTRIM" | cut -d' ' -f1)
-    [[ $F1 =~ ^-?[0-9]+(-[0-9]+)?$ ]] && VLAN=$F1 || { PORT=$F1; VLAN=$(echo $LTRIM|cut -d' ' -f2); }
-    tmpv=$(echo "$LTRIM" | grep -Eo '([0-9]{1,4})-([0-9]{1,4})' | head -1); #'
-    [ "$tmpv" = "2-4094" ] && continue;
-    [ ! -z "$tmpv" ] && { v1=$(echo "$tmpv" | cut -d'-' -f1); v2=$(echo "$tmpv" | cut -d'-' -f2); } || { v1=$VLAN; v2=$VLAN; }
-    for vlid in $(seq $v1 $v2); do
-        [ "$vlid" -ge 1 ] && [ "$vlid" -lt 4096 ] && {
-            [ ! -z "$PORT" ] && [ "$PORT" != "$OLDPORT" ] && { oldport="$PORT"; }
-            [ -z "$PORT" ] && port="$OLDPORT"
+    if [[ $F1 =~ ^-?[0-9]+(-[0-9]+)?$ ]]; then
+        VLAN=$F1
+    else
+        PORT=$F1
+        VLAN=$(echo "$LTRIM" | cut -d' ' -f2)
+    fi
+
+    # Skip the default full bridge range (2-4094)
+    [[ "$LTRIM" == *"2-4094"* ]] && continue
+
+    # Parse ranges natively (e.g. 531-4094)
+    if [[ "$VLAN" == *-* ]]; then
+        v1=${VLAN%-*}
+        v2=${VLAN#*-}
+    else
+        v1=$VLAN
+        v2=$VLAN
+    fi
+
+    for ((vlid=v1; vlid<=v2; vlid++)); do
+        if [ "$vlid" -ge 1 ] && [ "$vlid" -lt 4096 ]; then
             echo "$vlid" >> "$TMPDIR"/vlans
-            eval "INTM$vlid='$PORT '"\$"INTM$vlid"
-            [ -z "${LTRIM##*ntagged*}" ] && eval "INTU$vlid='$PORT '"\$"INTU$vlid"
-            logger -s -t "$TAG" -p "$PRIO" "P:$PORT V:$vlid LINE:$LTRIM"
-        }
+
+            # Safe indirect expansion lookup
+            var_m="INTM$vlid"
+            curr_m="${!var_m}"
+            printf -v "INTM$vlid" '%s' "${PORT} ${curr_m}"
+
+            if [[ "$LTRIM" == *"untagged"* ]]; then
+                var_u="INTU$vlid"
+                curr_u="${!var_u}"
+                printf -v "INTU$vlid" '%s' "${PORT} ${curr_u}"
+            fi
+        fi
     done
 done < "${TMPDIR}"/bridge.tmp
 
+# Process standard vlan interfaces 
 TMP=$(ip l | grep -Eo "vlan[0-9]+@" | grep -Eo "[0-9]+" | sort -un)
 for id in $TMP; do
-    eval "INTM$id='vlan${id} '"\$"INTM"$id
-    eval "INTU$id='vlan${id} '"\$"INTU"$id
+    var_m="INTM$id"
+    curr_m="${!var_m}"
+    printf -v "INTM$id" '%s' "vlan${id} ${curr_m}"
+
+    var_u="INTU$id"
+    curr_u="${!var_u}"
+    printf -v "INTU$id" '%s' "vlan${id} ${curr_u}"
+
+    echo "$id" >> "$TMPDIR"/vlans
 done
 
 VLANS=$(sort -un "$TMPDIR"/vlans | xargs)
-echo $VLANS > $TMPDIR/vlans
+echo "$VLANS" > "$TMPDIR"/vlans
 logger -s -t "$TAG" -p "$PRIO" "VLANs: $VLANS"
 
+# Output state to files 
 for vlid in $VLANS; do
-    eval TMP=\$"INTM$vlid"
-    [ ! -z "$TMP" ] && 	echo "INTM$vlid=\"$TMP\"" >> "${TMPDIR}"/portMembers
-    eval TMP=\$"INTU$vlid"
-    [ ! -z "$INTU$vlid" ] && echo "INTU$vlid=\"$TMP\"" >> "${TMPDIR}"/portUntagged
+    var_m="INTM$vlid"
+    if [ -n "${!var_m}" ]; then
+        echo "INTM$vlid=\"${!var_m}\"" >> "${TMPDIR}"/portMembers
+    fi
+    var_u="INTU$vlid"
+    if [ -n "${!var_u}" ]; then
+        echo "INTU$vlid=\"${!var_u}\"" >> "${TMPDIR}"/portUntagged
+    fi
 done
