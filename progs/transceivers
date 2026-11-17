@@ -1,0 +1,32 @@
+#!/bin/bash
+
+cont=0
+
+ERRSTR=""
+which jc > /dev/null
+ERRNR="$?"
+if [ "$ERRNR" != 0 ]; then
+    ERRSTR="JC missing"
+    JSON="[]"
+fi
+
+JSONSTART='{"version":"1","data":{'
+JSONEND='},"error":"'${ERRNR}'","errorString":"'${ERRSTR}'"}'
+
+if [[ "$ERRNR" == 0 ]]; then
+    while IFS= read -r iface; do
+        out=$(ethtool -m "$iface" 2>/dev/null) || continue
+        [[ -n "$out" ]] || continue
+
+        ifindex=$(<"/sys/class/net/$iface/ifindex") || continue
+        [[ $ifindex =~ ^[0-9]+$ ]] || continue
+
+        tmp=$(jc ethtool -m "$iface" | cut -c 2-)
+        [[ "$tmp" == "}" ]] && continue
+        JSON="\"${iface}\": {\"ifIndex\":${ifindex},${tmp}"
+        [[ "$cont" == 0 ]] && cont=1 || JSON=",${JSON}"
+    done < <(
+        awk -F: '/:/{gsub(/[ \t]+/, "", $1); print $1}' /proc/net/dev
+    )
+fi
+echo "${JSONSTART}${JSON}${JSONEND}"

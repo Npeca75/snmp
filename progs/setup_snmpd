@@ -38,6 +38,7 @@ logger -s -t "$TAG" -p "$PRIO" "MGMT IP: $MGMTIP"
 [ ! -z $(which pvesm) ] && LL="${LL}${NL}extend proxmox_disks ${PROGLOC}/proxmox_disks"
 [ ! -z $(which mysqld) ] && LL="${LL}${NL}extend mysql ${PROGLOC}/mysql"
 ls /dev/md* 2>/dev/null && LL="${LL}${NL}extend mdadm ${PROGLOC}/mdadm"
+LL="${LL}${NL}extend transceivers ${PROGLOC}/transceivers"
 
 HN=$(hostname -f)
 LDES="sysDescr Linux"
